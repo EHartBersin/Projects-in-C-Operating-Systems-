@@ -1,0 +1,583 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <limits.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+#define TOK_BUFSIZE 64
+#define PATH_BUF 200
+#define numBuiltins 8
+
+//Built-in command functions
+
+//changes the directory based on given command
+//if no command was given, then print the current directory
+int cd(char **args, char **envp) {
+    
+    	char cwd[1024];
+    
+    	//checks for an argument
+    	if (args[1] == NULL) {
+        
+        	//prints the current directory if no argument was given
+        	if (getcwd(cwd, sizeof (cwd)) != NULL) {
+            		printf("No directory was given.\nThe current working directory is: %s\n", cwd);
+        	} else {
+            		perror("getcwd() error.");
+        }
+    	//if argument was given, change the directory
+    	} else {
+        	//changes the directory to the argument given
+		//error check directory
+        	if (chdir(args[1]) != 0) {
+            		perror("Error changing directory");
+        	}
+        	//gets the new directory and sets the environment variable PWD to it
+        	if (getcwd(cwd, sizeof (cwd)) != NULL) {
+            		setenv("PWD", cwd, 1);
+        	}
+    	}
+    
+    	return 1;
+
+}
+
+//clears the terminal
+int clr(char **args, char **envp) {
+    	//this specific escape sequence moves all text to above the top line of the terminal
+    	printf("\033[H\033[2J");
+    	return 1;
+}
+
+//prints the current directory
+int dir(char **args, char **envp) {
+    
+    	//struct used to access the directory
+    	DIR *dp;
+    	struct dirent *ep;
+
+    	if (args[1] == NULL) {
+        	//no argument given, prints out the current working directory
+        	char buf[PATH_MAX + 1];
+        	char *cwd = getcwd(buf, PATH_MAX + 1);
+        	printf("No directory given as an argument.\nThe current working directory is: %s\n", cwd);
+        	dp = opendir(cwd);
+    	} else {
+        	//open the directory argument
+        	dp = opendir(args[1]);
+    	}
+    	if (dp != NULL) {
+        
+        	//cycles through the elements in the directory and prints them out
+        	while ((ep = readdir(dp))) {
+            		puts(ep->d_name);
+        	}
+        	(void) closedir(dp);
+    	} else {
+        	printf("Couldn't open the directory");
+		return 1;
+    	}
+    
+    	return 1;
+
+}
+
+
+//internal function environ, prints out all of the environment variables
+//if given a file, prints variables to file instead
+int _environ(char **args, char **envp) {
+    
+	int output = 0; //tracking if there is output 
+    	int out; //position of output in command
+   	//cycles through the arguments to find any redirection symbols
+    	//for each item in the user input
+    	int i;
+    	for (i = 0; args[i] != NULL; i++) {
+        	//if current position has >, then output
+        	if (strcmp(">", args[i]) == 0) {
+            	output = 1;
+            	out = i;
+        	}
+    	}
+    
+    	//if output file was given, print to output file
+    	if(output){
+        	FILE *outfile = fopen(args[out + 1], "w");
+		if(outfile == NULL){
+			printf("Error opening fiel for environ command");
+			return 1;
+		}
+
+		fprintf(outfile, "Environment variables: ");
+        	//cycles through and prints out each environment variable one per line
+		int i;
+        	for(i = 0; envp[i] != NULL; i++){
+			fprintf(outfile, "\n %s", envp[i]);
+        	}
+		return 1;
+    	}    
+
+	//no output file was given, print to screen
+	int j;
+	for(j = 0; envp[j] != NULL; j++){
+		printf("%s\n", envp[j]);
+	}    
+
+    	return 1;
+
+}
+
+
+//displays user's comment
+int echo(char **args, char **envp) {
+    
+    	int output = 0; //tracking if there is output 
+    	int out; //position of output in command
+    	//cycles through the arguments to find any redirection symbols
+    	//for each item in the user input
+    	int i;
+    	for (i = 0; args[i] != NULL; i++) {
+        	//if current position has >, then output
+        	if (strcmp(">", args[i]) == 0) {
+            		output = 1;
+            		out = i;
+        	}
+    	}
+    
+    	//if output file was given, print to output file
+    	if(output){
+        	FILE *outfile = fopen(args[out + 1], "w");
+        	int i;
+        	//cycles through all arguments after echo and prints them out
+        	for (i = 1; args[i] != NULL; i++) {
+            		fprintf(outfile, "%s ", *(args + i));
+        	}
+        	return 1;
+    	}
+    
+    	//no command for redirection given then print to stdout
+    	int j;
+    	//cycles through arguments and prints them out
+    	for(j = 1; args[j] != NULL; j++){
+		printf("%s ", *(args + j));
+	}
+    	printf("\n");
+    
+    	return 1;
+
+}
+
+//prints the contents of readme 
+int help(char **args, char **envp) {
+
+    	//declaring variable for each line
+    	char line[256];
+    
+    	//open readme file and check if pointer if NULL
+    	FILE *fp = fopen("README.txt", "r");
+    	if (fp == NULL) {
+        	fputs("Unable to open readme file\n", stdout);
+        	return 1;
+    	}
+
+    	int output = 0; //tracking if there is output 
+    	int out; //position of output in command
+    	//cycles through the arguments to find any redirection symbols
+    	//for each item in the user input
+    	int i;
+    	for (i = 0; args[i] != NULL; i++) {
+        	//if current position has >, then output
+        	if (strcmp(">", args[i]) == 0) {
+            		output = 1;
+            		out = i;
+        	}
+    	}
+    
+    	//if there was an output command, redirect to the output file
+    	if(output){
+        	FILE *outfile = fopen(args[out + 1], "w");
+        	while (fgets(line, 256, fp) != NULL) {
+            		fputs(line, outfile);
+        	}
+        
+        	return 1;
+        
+    	}
+
+    	//if no output command, then just print to sdtout
+    	//while the next line is not equal to null, print the line
+    	while (fgets(line, 256, fp) != NULL) {
+        	fputs(line, stdout);
+    	}
+    
+    	//return 1 keep status set to true for do while loop
+    	return 1;
+
+}
+
+//pauses shell until user inputs enter
+int _pause(char **args, char **envp) {
+    
+    	char c;
+    	//print the pause message
+    	//get next character and do nothing until the user presses 'enter' (\n)
+	printf("PAUSED: ");
+    	while ((c = getchar()) != '\n') {
+    	}
+    
+    	return 1;
+
+}
+
+//quits the shell
+int _quit(char **args, char **envp) {
+    	
+	//sets status to be 0
+    	//which causes do while loop to stop
+    	printf("QUIT\n");
+    	return 0;
+
+}
+
+
+//strings of possible commands in user input
+char *builtIns_str[] = {"cd", "clr", "dir", "environ", "echo", "help", "pause", "quit"};
+
+//array containing pointers to each of the internal functions
+int (*builtIns_functions[]) (char **, char **) = {
+    	&cd, &clr, &dir, &_environ, &echo, &help, &_pause, &_quit
+};
+
+
+//Functions for main while loop, reads a line, breaks it down into parts, and executes based off user input
+
+//reads and returns the line of text entered by the user from stdin
+char *read_line(void) {
+    
+    	//declare the string to store the line
+    	char *line = NULL;
+    	ssize_t len = 0;
+	ssize_t read; 
+    	getline(&line, &len, stdin);
+	int size = strlen(line);
+	line[size-1] = '\0';
+    	return line;
+    
+}
+
+char **parse_line(char *line){
+    
+    	const char delim[1] = " ";
+    	int bufsize = TOK_BUFSIZE;
+    	char *token = strtok(line, delim);
+    	char **tokens = malloc(bufsize * sizeof (char*));
+    
+    	if (!token) {
+        	fprintf(stderr, "Error allocating memory.\n");
+        	exit(1);
+    	}
+    
+    	int position = 0;
+    	while(token != NULL && token != "\n"){
+		//printf("%s", token);
+        	tokens[position] = token;
+        	token = strtok(NULL, delim);
+        	position++;
+    	}
+    
+    	tokens[position] = NULL;
+    	return tokens;
+
+}
+
+//executes either the internal function or launches a program based on the given arguments
+int execute(char **args, char **envp) {
+    
+	//no command was given, return
+	if (args[0] == NULL) {
+		return 1;
+	}
+
+    	//indicator variables for use of non-default launch function
+    	int wait = 0;
+    	int pipe = 0;
+
+    	//search for the special symbols and indicate if found
+    	int i;
+    	for (i = 0; args[i] != NULL; i++) {
+        	if (strstr("&", args[i])) {
+            		wait = 1;
+			break;
+        	} else if (strstr("|", args[i])) {
+            		pipe = 1;
+			break;
+        	}
+    	}
+	
+    	//look to use a built-in function if there were no special symbols
+    	if ((!wait) && (!pipe)) {
+		//going through each possible command ni built ins
+		for(int i = 0; i < numBuiltins; i++){
+            	//if args contains a built-in command
+                //run that command
+            		if (strstr(args[0], builtIns_str[i])) {
+                		return (*builtIns_functions[i])(args, envp);
+            		}
+		}
+    	}
+    	//use background execution, dont wait for child to finish
+    	if (wait) {
+        	return background(args);
+    	} else if (pipe) {
+        	//use pipe execution, redirects output of one program into the input of another
+        	return pipes(args);
+    	} else {
+        	//use default launching which also handles redirection
+        	return redirection(args);
+    	}
+	
+	return 1;
+    
+}
+
+//executes user program using fork and exec, then returns to the shell prompt wo waiting for child
+int background(char **args) {
+	
+	//printf("\n in background \n");    
+
+	//changing & to NULL
+	int i;
+	for(i = 0; args[i] != NULL; i++){
+		if(strcmp("&", args[i]) == 0){
+			args[i] = NULL;
+		}
+	}
+
+
+	//used to identify child processes
+    	pid_t pid;
+
+    	//creating child
+    	pid = fork();
+    	if (pid == 0) {
+		
+        	//in the child process, execute child
+		//then check if child executed
+		int processStatus = execvp(args[0], args);
+        	if (processStatus == -1) {
+            		printf("Background process has failed\n");
+			return 1;
+        	}
+        	return(0);
+    	} else if (pid < 0) {
+        	//error check fork
+        	printf("Forking background process has failed\n");
+		return 1;
+    	} else {
+        	//in the parent process
+        	//return to shell, dont wait for child to finish
+        	return 1;
+    }
+}
+
+//launches user given program using fork and exec
+int pipes(char **args) {
+    
+	//printf("\nIn pipes \n");
+    	//variables for file descriptors and child process
+    	int fd[2];
+    	pid_t pid;
+
+    	//find the position of the pipe
+    	int i, j = 0;
+    	for (i = 0; args[i] != NULL; i++) {
+        	if (strcmp("|", args[i]) == 0) {
+            		j = i;
+			args[i] = NULL;
+        	}
+    	}
+
+    	//create the pipe and error check
+    	if (pipe(fd) == -1) {
+        	printf("pipe error\n");
+        	return 1;
+    	}
+
+    	//create a child process
+    	pid = fork();
+    	if (pid == 0) {
+        
+        	//in the child
+        
+        	//replace standard output with the output for the pipe
+        	dup2(fd[1], STDOUT_FILENO);
+        
+        	//close the unused input
+        	close(fd[0]);
+        	close(fd[1]);
+        	//execute the first program
+        	if ((execlp(args[j + 1], args + j + 1, NULL)) == -1) {
+           		printf("Piping has failed in child\n");
+			return 1;
+        	}
+    	} else if (pid < 0) {
+        	//error occurred with fork no child was made
+        	printf("Forking has failed");
+		return 1;
+    	} else {
+        
+        	//in the parent
+        	//create another process
+        	pid = fork();
+        	if (pid == 0) {
+            		//in the child process
+            		//replace standard input with the input
+            		dup2(fd[0], STDIN_FILENO);
+            
+            		//close the output part of the pipe
+            		close(fd[1]);
+            		close(fd[0]);
+            		//execute the second program
+            		if ((execlp(args[0], args, NULL)) == -1) {
+                		printf("Piping has failed in parent");
+				return 1;
+            		}
+        	} else if (pid < 0) {
+            		//error occurred with fork
+            		printf("Forking has failed");
+			return 1;
+        	}
+    	}
+    	//close the file descriptors and return from the parent
+    	close(fd[0]);
+    	close(fd[1]);
+    	return 1;
+}
+
+//handles I/O redirects
+int redirection(char **args) {
+    
+    	//variables for determining child processes
+    	pid_t pid;
+        int status = 0;
+
+        //variables to indicate whether there is redirection and where
+        int i, j = 0, k = 0, l = 0, input = 0, output = 0, append = 0, fargs = 1;
+
+        //cycles through the arguments to find any redirection symbols
+        for (i = 0; args[i] != NULL; i++) {
+            if (strcmp("<", args[i]) == 0) {
+                input = 1;
+                j = i;
+            } else if (strcmp(">", args[i]) == 0) {
+                output = 1;
+                k = i;
+            } else if (strcmp(">>", args[i]) == 0) {
+                append = 1;
+                l = i;
+            }
+        }
+
+        //creates a child process
+        pid = fork();
+        if (pid == 0) {
+            //in the child process
+            if (input) {
+                //change file descriptors from stdin to args[j+1] if redirecting input
+                int fd0;
+                if ((fd0 = open(args[j + 1], O_RDONLY)) < 0) {
+                    printf("error opening %s for reading\n", args[j + 1]);
+                    fargs = 0;
+                }
+                dup2(fd0, STDIN_FILENO);
+                close(fd0);
+            }
+            if (output) {
+                //change file descriptors from stdout to args[k+1] if redirecting output
+                int fd1;
+                if ((fd1 = open(args[k + 1], O_RDWR | O_CREAT | O_TRUNC, 0666)) < 0) {
+                    printf("error opening %s for writing\n", args[k + 1]);
+                    fargs = 0;
+                }
+                dup2(fd1, STDOUT_FILENO);
+                close(fd1);
+            }
+            if (append) {
+                //change file descriptors from stdout to args[l+1] if redirecting output
+                int fd1;
+                if ((fd1 = open(args[l + 1], O_RDWR | O_CREAT | O_APPEND, 0666)) < 0) {
+                    printf("error opening %s for writing\n", args[l + 1]);
+                    fargs = 0;
+                }
+                dup2(fd1, STDOUT_FILENO);
+                close(fd1);
+            }
+
+	//check that there were actually arguments passed from redirects
+	if (fargs){
+		if(input){
+			char *args2[2];
+			strncpy(args[2], args2[0], strlen(args[2]));
+			args2[1] = '\0';
+			if ((execvp(args[0], args2)) == -1){
+				perror("Input redirection failed");
+			}
+		}else{
+			if((execvp(args[0], args)) == -1){
+				perror("Program invocation has failed");
+	        	}        
+		}
+	}
+	exit(EXIT_FAILURE);
+	} else if (pid < 0) {
+                //error occurred with fork
+                perror("Forking has failed");
+        } else {
+                //in the parent process
+        do {
+                //wait for the child process to finish before returning control of the shell to the user
+                waitpid(pid, &status, WUNTRACED);
+       		} while (!WIFEXITED(status) && !WIFSIGNALED(status));
+        }
+
+        return 1;
+    
+}
+
+//main while loop that starts
+int main(int argc, char **argv, char **envp){
+    
+    	//variables for storing command line and shell status
+    	char *line;
+    	char **args;
+    	int status = 1;
+
+    	//begin run of the loop
+    	while (status){
+    	    
+        	//gets and prints the current directory
+       		char buf[PATH_MAX + 1];
+        	char *cwd = getcwd(buf, PATH_MAX + 1);
+        	printf("%s/myshell/", cwd);
+        
+        	line = read_line();
+        	args = parse_line(line);
+        	status = execute(args, envp);
+        	if(strstr(args[0], "quit")){
+			    break;
+		    }
+		
+        	free(line);
+        	free(args);
+        
+    	}
+
+    	return EXIT_SUCCESS;
+
+}
