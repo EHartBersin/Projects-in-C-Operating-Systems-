@@ -1,0 +1,1 @@
+This is a collection of projects completed for the course Introduction to Systems Programming and Operating Systems. All projects were done in low-level programming using C. Each project contains its own individual readMe, describing the project and its features.
